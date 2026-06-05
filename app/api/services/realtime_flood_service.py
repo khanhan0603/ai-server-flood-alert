@@ -243,6 +243,7 @@ def save_flood_prediction(
     prediction: Dict[str, Any],
     sensor_reading_id: Optional[str] = None,
 ) -> FloodPrediction:
+
     record = FloodPrediction(
         madulieu=weather.id,
         sensor_reading_id=sensor_reading_id,
@@ -261,7 +262,6 @@ def save_flood_prediction(
 
     db.add(record)
     db.commit()
-    db.refresh(record)
 
     return record
 

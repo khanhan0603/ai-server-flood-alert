@@ -8,4 +8,5 @@ router = APIRouter()
 
 @router.post("/predict-all")
 def predict_all():
+    
     return predict_all_areas()
