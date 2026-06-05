@@ -1,0 +1,1 @@
+#Thự mục config chứa các cấu hình cho ứng dụng

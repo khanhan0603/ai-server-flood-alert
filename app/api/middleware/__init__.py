@@ -1,0 +1,1 @@
+#Thư mục middleware chứa các middleware xử lý request, response khi người dùng gọi tới ứng dụng
