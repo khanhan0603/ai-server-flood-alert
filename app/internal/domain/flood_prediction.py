@@ -20,7 +20,8 @@ class FloodPrediction(Base):
     lead3_probability = Column(Float)
 
     predicted_at = Column(DateTime, nullable=True)
+    weather_from = Column(DateTime, nullable=True)
+    weather_to = Column(DateTime, nullable=True)
 
     area_id = Column(UUID(as_uuid=True), nullable=True)
     sensor_reading_id = Column(UUID(as_uuid=True), nullable=True)
-    madulieu = Column(UUID(as_uuid=True), nullable=False)
