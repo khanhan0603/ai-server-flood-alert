@@ -37,27 +37,6 @@ def _to_float(value: Any) -> Optional[float]:
         return float(value)
     return float(value)
 
-
-def _weather_to_payload(weather: WeatherData, device: Optional[IotDevice] = None) -> Dict[str, Any]:
-    lat = _to_float(device.lat) if device else None
-    lon = _to_float(device.lon) if device else None
-
-    return {
-        "province": weather.area_id,
-        "area_id": weather.area_id,
-        "lat": lat,
-        "lon": lon,
-        "rainfall": _to_float(weather.rainfall),
-        "temperature": _to_float(weather.temperature),
-        "dewpoint": _to_float(weather.dewpoint),
-        "pressure": _to_float(weather.pressure),
-        "wind_speed": _to_float(weather.wind_speed),
-        "wind_direction": _to_float(weather.wind_direction),
-        "humidity": _to_float(weather.humidity),
-        "evapotranspiration": _to_float(weather.evapotranspiration),
-    }
-
-
 def get_latest_device_by_area(db: Session, area_id: str) -> Optional[IotDevice]:
     return (
         db.query(IotDevice)
@@ -307,11 +286,12 @@ def save_flood_prediction(
     )
 
     db.add(record)
-    db.commit()
+    db.flush()
 
     return record
 
 def predict_all_areas() -> Dict[str, Any]:
+
     start = time.perf_counter()
     logger.info("Starting flood prediction job")
 
@@ -323,22 +303,37 @@ def predict_all_areas() -> Dict[str, Any]:
     try:
         area_ids = get_all_area_ids_with_weather(db)
 
-        for area_id in area_ids:
+        logger.info(
+            "Total areas found=%s",
+            len(area_ids)
+        )
+
+        for idx, area_id in enumerate(area_ids, start=1):
+
             try:
                 result = predict_realtime_by_area(db, area_id)
 
                 if result.get("status") != "success":
                     errors += 1
+
                     logger.warning(
                         "Prediction skipped for area_id=%s: %s",
                         area_id,
-                        result.get("message"),
+                        result.get("message")
                     )
                     continue
 
                 processed += 1
 
+                if idx % 100 == 0:
+                    logger.info(
+                        "Progress %s/%s",
+                        idx,
+                        len(area_ids)
+                    )
+
                 forecast = result.get("forecast", {})
+
                 has_high_risk = any(
                     day.get("risk_level") == "HIGH"
                     for day in forecast.values()
@@ -349,10 +344,19 @@ def predict_all_areas() -> Dict[str, Any]:
 
             except Exception:
                 errors += 1
-                logger.exception("Prediction failed for area_id=%s", area_id)
+
+                logger.exception(
+                    "Prediction failed for area_id=%s",
+                    area_id
+                )
+
                 db.rollback()
 
-        duration_ms = int((time.perf_counter() - start) * 1000)
+        db.commit()
+
+        duration_ms = int(
+            (time.perf_counter() - start) * 1000
+        )
 
         logger.info(
             "Finished flood prediction job: processed=%s high_risk=%s errors=%s duration_ms=%s",
@@ -379,5 +383,6 @@ def predict_all_areas() -> Dict[str, Any]:
             "errors": errors,
             "duration_ms": duration_ms,
         }
+
     finally:
         db.close()
