@@ -15,9 +15,10 @@ from app.internal.domain.iot_device import IotDevice
 from app.internal.domain.iot_sensor_reading import IotSensorReading
 from app.internal.domain.weather_data import WeatherData
 
-from datetime import datetime
+from datetime import date, datetime, timedelta
 
 from app.internal.domain.flood_prediction import FloodPrediction
+from concurrent.futures import ThreadPoolExecutor,as_completed
 
 logger = logging.getLogger(__name__)
 
@@ -267,6 +268,8 @@ def save_flood_prediction(
     weather_to,
     sensor_reading_id: Optional[str] = None,
 ) -> FloodPrediction:
+    
+    today=date.today() #Ngày AI chạy
 
     record = FloodPrediction(
         sensor_reading_id=sensor_reading_id,
@@ -278,6 +281,10 @@ def save_flood_prediction(
         lead1=prediction["forecast"]["day_1"]["risk_level"],
         lead2=prediction["forecast"]["day_2"]["risk_level"],
         lead3=prediction["forecast"]["day_3"]["risk_level"],
+        
+        lead1_date=today,
+        lead2_date=today + timedelta(days=1),
+        lead3_date=today + timedelta(days=2),
 
         predicted_at=datetime.now(),
         weather_from=weather_from,
@@ -292,93 +299,71 @@ def save_flood_prediction(
 
 def predict_all_areas() -> Dict[str, Any]:
     logger.info("START BACKGROUND PREDICTION")
-
     start = time.perf_counter()
 
     db = get_db_session()
-
-    processed = 0
-    high_risk = 0
-    errors = 0
-
     try:
         area_ids = get_all_area_ids_with_weather(db)
+    finally:
+        db.close()
 
-        total = len(area_ids)
+    processed = errors = high_risk = 0
+    total = len(area_ids)
+    logger.info("Total areas found=%s", total)
 
-        logger.info("Total areas found=%s", total)
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = {
+            executor.submit(_predict_one_area, area_id): area_id
+            for area_id in area_ids
+        }
 
-        for idx, area_id in enumerate(area_ids, start=1):
-
+        for i, future in enumerate(as_completed(futures), 1):
+            area_id = futures[future]
             try:
-                result = predict_realtime_by_area(db, area_id)
-
-                if result.get("status") != "success":
+                result = future.result()
+                if result.get("status") == "success":
+                    processed += 1
+                    if any(
+                        d.get("risk_level") == "HIGH"
+                        for d in result.get("forecast", {}).values()
+                    ):
+                        high_risk += 1
+                else:
                     errors += 1
-
                     logger.warning(
                         "Prediction skipped area=%s reason=%s",
                         area_id,
-                        result.get("message")
+                        result.get("message"),
                     )
-                    continue
-
-                processed += 1
-
-                forecast = result.get("forecast", {})
-
-                if any(
-                    day.get("risk_level") == "HIGH"
-                    for day in forecast.values()
-                ):
-                    high_risk += 1
-
-                # commit mỗi 100 area
-                if idx % 100 == 0:
-                    db.commit()
-
-                    logger.info(
-                        "Progress %s/%s processed=%s high_risk=%s errors=%s",
-                        idx,
-                        total,
-                        processed,
-                        high_risk,
-                        errors
-                    )
-
             except Exception:
                 errors += 1
+                logger.exception("Prediction failed area=%s", area_id)
 
-                logger.exception(
-                    "Prediction failed area=%s",
-                    area_id
+            if i % 100 == 0:
+                logger.info(
+                    "Progress %s/%s processed=%s errors=%s",
+                    i, total, processed, errors,
                 )
 
-                db.rollback()
+    duration_ms = int((time.perf_counter() - start) * 1000)
+    logger.info(
+        "Finished: total=%s processed=%s high_risk=%s errors=%s duration_ms=%s",
+        total, processed, high_risk, errors, duration_ms,
+    )
 
-        db.commit()
+    return {
+        "status": "success",
+        "total": total,
+        "processed": processed,
+        "high_risk": high_risk,
+        "errors": errors,
+        "duration_ms": duration_ms,
+    }
 
-        duration_ms = int(
-            (time.perf_counter() - start) * 1000
-        )
-
-        logger.info(
-            "Finished prediction: total=%s processed=%s high_risk=%s errors=%s duration_ms=%s",
-            total,
-            processed,
-            high_risk,
-            errors,
-            duration_ms
-        )
-
-        return {
-            "status": "success",
-            "total": total,
-            "processed": processed,
-            "high_risk": high_risk,
-            "errors": errors,
-            "duration_ms": duration_ms
-        }
-
+def _predict_one_area(area_id: str)-> Dict[str, Any]:
+    # Mỗi thread dùng session riêng
+    db=get_db_session()
+    try:
+        return predict_realtime_by_area(db,area_id)
     finally:
         db.close()
