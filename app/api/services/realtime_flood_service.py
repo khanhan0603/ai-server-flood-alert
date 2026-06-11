@@ -308,48 +308,82 @@ def predict_all_areas() -> Dict[str, Any]:
     finally:
         db.close()
 
-    processed = errors = high_risk = 0
     total = len(area_ids)
+
     logger.info("Total areas found=%s", total)
 
-    with ThreadPoolExecutor(max_workers=10) as executor:
-        futures = {
-            executor.submit(_predict_one_area, area_id): area_id
-            for area_id in area_ids
-        }
+    processed = 0
+    errors = 0
+    high_risk = 0
 
-        for i, future in enumerate(as_completed(futures), 1):
-            area_id = futures[future]
-            try:
-                result = future.result(timeout=120)
-                if result.get("status") == "success":
-                    processed += 1
-                    if any(
-                        d.get("risk_level") == "HIGH"
-                        for d in result.get("forecast", {}).values()
-                    ):
-                        high_risk += 1
-                else:
+    BATCH_SIZE = 100
+    MAX_WORKERS = 5
+
+    for batch_start in range(0, total, BATCH_SIZE):
+        batch = area_ids[batch_start: batch_start + BATCH_SIZE]
+
+        logger.info(
+            "Starting batch %s -> %s",
+            batch_start + 1,
+            min(batch_start + BATCH_SIZE, total)
+        )
+
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+
+            futures = {
+                executor.submit(_predict_one_area, area_id): area_id
+                for area_id in batch
+            }
+
+            for future in as_completed(futures):
+                area_id = futures[future]
+
+                try:
+                    result = future.result()
+
+                    if result.get("status") == "success":
+                        processed += 1
+
+                        if any(
+                            day.get("risk_level") == "HIGH"
+                            for day in result.get("forecast", {}).values()
+                        ):
+                            high_risk += 1
+
+                    else:
+                        errors += 1
+
+                        logger.warning(
+                            "Prediction skipped area=%s reason=%s",
+                            area_id,
+                            result.get("message"),
+                        )
+
+                except Exception:
                     errors += 1
-                    logger.warning(
-                        "Prediction skipped area=%s reason=%s",
-                        area_id,
-                        result.get("message"),
-                    )
-            except Exception:
-                errors += 1
-                logger.exception("Prediction failed area=%s", area_id)
 
-            if i % 100 == 0:
-                logger.info(
-                    "Progress %s/%s processed=%s errors=%s",
-                    i, total, processed, errors,
-                )
+                    logger.exception(
+                        "Prediction failed area=%s",
+                        area_id
+                    )
+
+        logger.info(
+            "Batch completed. Progress=%s/%s processed=%s errors=%s",
+            processed + errors,
+            total,
+            processed,
+            errors,
+        )
 
     duration_ms = int((time.perf_counter() - start) * 1000)
+
     logger.info(
         "Finished: total=%s processed=%s high_risk=%s errors=%s duration_ms=%s",
-        total, processed, high_risk, errors, duration_ms,
+        total,
+        processed,
+        high_risk,
+        errors,
+        duration_ms,
     )
 
     return {
