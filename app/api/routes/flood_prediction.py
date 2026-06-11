@@ -45,3 +45,4 @@ def run_predict_all_background():
 
     finally:
         prediction_status["running"] = False
+        print("JOB FINALLY", flush=True)

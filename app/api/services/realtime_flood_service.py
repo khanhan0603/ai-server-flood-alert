@@ -1,4 +1,5 @@
 from decimal import Decimal
+import os
 from typing import Any, Dict, Optional
 
 from sqlalchemy.orm import Session
@@ -309,7 +310,10 @@ def predict_all_areas() -> Dict[str, Any]:
         db.close()
 
     total = len(area_ids)
-
+    print(
+        f"PID={os.getpid()} TOTAL={total}",
+        flush=True
+    )
     logger.info("Total areas found=%s", total)
 
     processed = 0
@@ -317,7 +321,7 @@ def predict_all_areas() -> Dict[str, Any]:
     high_risk = 0
 
     BATCH_SIZE = 100
-    MAX_WORKERS = 5
+    MAX_WORKERS = 3
 
     for batch_start in range(0, total, BATCH_SIZE):
         batch = area_ids[batch_start: batch_start + BATCH_SIZE]
@@ -367,12 +371,12 @@ def predict_all_areas() -> Dict[str, Any]:
                         area_id
                     )
 
-        logger.info(
-            "Batch completed. Progress=%s/%s processed=%s errors=%s",
-            processed + errors,
-            total,
-            processed,
-            errors,
+        print(
+            f"PID={os.getpid()} "
+            f"PROGRESS={processed + errors}/{total} "
+            f"processed={processed} "
+            f"errors={errors}",
+            flush=True
         )
 
     duration_ms = int((time.perf_counter() - start) * 1000)
