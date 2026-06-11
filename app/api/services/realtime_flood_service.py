@@ -299,22 +299,38 @@ def save_flood_prediction(
 
     return record
 
-def predict_all_areas() -> Dict[str, Any]:
+def predict_all_areas(
+    offset: int = 0,
+    limit: int = 500
+    ) -> Dict[str, Any]:
     logger.info("START BACKGROUND PREDICTION")
     start = time.perf_counter()
 
     db = get_db_session()
     try:
         area_ids = get_all_area_ids_with_weather(db)
+        all_total = len(area_ids)
+
+        area_ids = area_ids[offset: offset + limit]
+
+        total = len(area_ids)
+
+        print(
+            f"OFFSET={offset} "
+            f"LIMIT={limit} "
+            f"BATCH_SIZE={total} "
+            f"ALL_TOTAL={all_total}",
+            flush=True
+        )
     finally:
         db.close()
 
-    total = len(area_ids)
-    print(
-        f"PID={os.getpid()} TOTAL={total}",
-        flush=True
+    logger.info(
+        "Batch offset=%s limit=%s total=%s",
+        offset,
+        limit,
+        total
     )
-    logger.info("Total areas found=%s", total)
 
     processed = 0
     errors = 0
