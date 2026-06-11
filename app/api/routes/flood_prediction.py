@@ -22,12 +22,26 @@ def predict_all_status():
 
 
 def run_predict_all_background():
-    # Hàm sync — BackgroundTasks chạy trong thread riêng, không block event loop
+    print("BACKGROUND TASK STARTED", flush=True)
+
     prediction_status["running"] = True
+
     try:
         result = predict_all_areas()
+
+        print(f"BACKGROUND TASK DONE: {result}", flush=True)
+
         prediction_status["last_result"] = result
+
     except Exception as e:
-        prediction_status["last_result"] = {"status": "error", "message": str(e)}
+        import traceback
+
+        traceback.print_exc()
+
+        prediction_status["last_result"] = {
+            "status": "error",
+            "message": str(e),
+        }
+
     finally:
         prediction_status["running"] = False

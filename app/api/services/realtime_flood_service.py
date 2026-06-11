@@ -293,7 +293,8 @@ def save_flood_prediction(
     )
 
     db.add(record)
-    db.flush()
+    db.commit()
+    db.refresh(record)
 
     return record
 
@@ -320,7 +321,7 @@ def predict_all_areas() -> Dict[str, Any]:
         for i, future in enumerate(as_completed(futures), 1):
             area_id = futures[future]
             try:
-                result = future.result()
+                result = future.result(timeout=120)
                 if result.get("status") == "success":
                     processed += 1
                     if any(
@@ -360,10 +361,22 @@ def predict_all_areas() -> Dict[str, Any]:
         "duration_ms": duration_ms,
     }
 
-def _predict_one_area(area_id: str)-> Dict[str, Any]:
-    # Mỗi thread dùng session riêng
-    db=get_db_session()
+def _predict_one_area(area_id: str) -> Dict[str, Any]:
+    print(f"START AREA {area_id}", flush=True)
+
+    db = get_db_session()
+
     try:
-        return predict_realtime_by_area(db,area_id)
+        result = predict_realtime_by_area(db, area_id)
+
+        print(f"DONE AREA {area_id}", flush=True)
+
+        return result
+
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        raise
+
     finally:
         db.close()
