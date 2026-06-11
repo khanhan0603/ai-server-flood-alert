@@ -291,11 +291,12 @@ def save_flood_prediction(
     return record
 
 def predict_all_areas() -> Dict[str, Any]:
+    logger.info("START BACKGROUND PREDICTION")
 
     start = time.perf_counter()
-    logger.info("Starting flood prediction job")
 
     db = get_db_session()
+
     processed = 0
     high_risk = 0
     errors = 0
@@ -303,10 +304,9 @@ def predict_all_areas() -> Dict[str, Any]:
     try:
         area_ids = get_all_area_ids_with_weather(db)
 
-        logger.info(
-            "Total areas found=%s",
-            len(area_ids)
-        )
+        total = len(area_ids)
+
+        logger.info("Total areas found=%s", total)
 
         for idx, area_id in enumerate(area_ids, start=1):
 
@@ -317,7 +317,7 @@ def predict_all_areas() -> Dict[str, Any]:
                     errors += 1
 
                     logger.warning(
-                        "Prediction skipped for area_id=%s: %s",
+                        "Prediction skipped area=%s reason=%s",
                         area_id,
                         result.get("message")
                     )
@@ -325,28 +325,32 @@ def predict_all_areas() -> Dict[str, Any]:
 
                 processed += 1
 
-                if idx % 100 == 0:
-                    logger.info(
-                        "Progress %s/%s",
-                        idx,
-                        len(area_ids)
-                    )
-
                 forecast = result.get("forecast", {})
 
-                has_high_risk = any(
+                if any(
                     day.get("risk_level") == "HIGH"
                     for day in forecast.values()
-                )
-
-                if has_high_risk:
+                ):
                     high_risk += 1
+
+                # commit mỗi 100 area
+                if idx % 100 == 0:
+                    db.commit()
+
+                    logger.info(
+                        "Progress %s/%s processed=%s high_risk=%s errors=%s",
+                        idx,
+                        total,
+                        processed,
+                        high_risk,
+                        errors
+                    )
 
             except Exception:
                 errors += 1
 
                 logger.exception(
-                    "Prediction failed for area_id=%s",
+                    "Prediction failed area=%s",
                     area_id
                 )
 
@@ -359,29 +363,21 @@ def predict_all_areas() -> Dict[str, Any]:
         )
 
         logger.info(
-            "Finished flood prediction job: processed=%s high_risk=%s errors=%s duration_ms=%s",
+            "Finished prediction: total=%s processed=%s high_risk=%s errors=%s duration_ms=%s",
+            total,
             processed,
             high_risk,
             errors,
-            duration_ms,
+            duration_ms
         )
-
-        if processed == 0 and errors > 0:
-            return {
-                "status": "error",
-                "processed": processed,
-                "high_risk": high_risk,
-                "errors": errors,
-                "duration_ms": duration_ms,
-                "message": "All prediction jobs failed",
-            }
 
         return {
             "status": "success",
+            "total": total,
             "processed": processed,
             "high_risk": high_risk,
             "errors": errors,
-            "duration_ms": duration_ms,
+            "duration_ms": duration_ms
         }
 
     finally:

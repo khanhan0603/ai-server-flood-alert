@@ -7,6 +7,11 @@ router = APIRouter()
 
 
 @router.post("/predict-all")
-def predict_all():
+def predict_all(background_tasks: BackgroundTasks):
 
-    return predict_all_areas()
+    background_tasks.add_task(predict_all_areas)
+
+    return {
+        "status": "accepted",
+        "message": "Prediction started"
+    }
