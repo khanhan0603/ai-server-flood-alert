@@ -16,6 +16,8 @@ from app.internal.domain.iot_device import IotDevice
 from app.internal.domain.weather_data import WeatherData
 
 from datetime import date, datetime, timedelta
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from app.internal.domain.flood_prediction import FloodPrediction
 from concurrent.futures import ThreadPoolExecutor,as_completed
@@ -75,12 +77,14 @@ def predict_realtime_by_area(db: Session, area_id: str) -> Dict[str, Any]:
             "records_required": 192,
         }
 
-    weather_from = min(item.time for item in weather_records)
-    weather_to = max(item.time for item in weather_records)
-
     latest_weather = max(weather_records, key=lambda item: item.time)
 
-    features = build_features_from_weather_history(weather_records)
+    feature_result = build_features_from_weather_history(weather_records)
+
+    features = feature_result["features"]
+
+    weather_from = feature_result["weather_from"]
+    weather_to = feature_result["weather_to"]
 
     payload = {
         "province": area_id,
@@ -246,7 +250,11 @@ def build_features_from_weather_history(records: list[WeatherData]) -> Dict[str,
 
     features["api"] = float(api)
 
-    return features
+    return {
+        "features": features,
+        "weather_from": pd.to_datetime(df.iloc[0]["date"]),
+        "weather_to": pd.to_datetime(today["date"]),
+    }
 
 def save_flood_prediction(
     db: Session,
@@ -256,7 +264,9 @@ def save_flood_prediction(
     weather_to,
 ) -> FloodPrediction:
     
-    today=date.today() #Ngày AI chạy
+    today = datetime.now(
+        ZoneInfo("Asia/Ho_Chi_Minh")
+    ).date() #Ngày AI chạy
 
     record = FloodPrediction(
         lead1_probability=prediction["forecast"]["day_1"]["probability"],
@@ -271,7 +281,9 @@ def save_flood_prediction(
         lead2_date=today + timedelta(days=1),
         lead3_date=today + timedelta(days=2),
 
-        predicted_at=datetime.now(),
+        predicted_at=datetime.now(
+            ZoneInfo("Asia/Ho_Chi_Minh")
+        ),
         weather_from=weather_from,
         weather_to=weather_to,
         area_id=weather.area_id,
