@@ -28,4 +28,3 @@ class FloodPrediction(Base):
     weather_to = Column(DateTime, nullable=True)
 
     area_id = Column(UUID(as_uuid=True), nullable=True)
-    sensor_reading_id = Column(UUID(as_uuid=True), nullable=True)
