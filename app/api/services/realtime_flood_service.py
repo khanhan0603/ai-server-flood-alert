@@ -13,7 +13,6 @@ from app.config.database import get_db_session
 
 from app.api.services.flood_model_service import run_flood_prediction
 from app.internal.domain.iot_device import IotDevice
-from app.internal.domain.iot_sensor_reading import IotSensorReading
 from app.internal.domain.weather_data import WeatherData
 
 from datetime import date, datetime, timedelta
@@ -44,18 +43,6 @@ def get_latest_device_by_area(db: Session, area_id: str) -> Optional[IotDevice]:
         db.query(IotDevice)
         .filter(IotDevice.area_id == area_id)
         .order_by(IotDevice.last_seen_at.desc().nullslast(), IotDevice.updated_at.desc())
-        .first()
-    )
-
-
-def get_latest_sensor_reading(db: Session, device_id: str) -> Optional[IotSensorReading]:
-    return (
-        db.query(IotSensorReading)
-        .filter(
-            IotSensorReading.device_id == device_id,
-            IotSensorReading.is_valid.is_(True),
-        )
-        .order_by(IotSensorReading.recorded_at.desc())
         .first()
     )
 
@@ -267,14 +254,11 @@ def save_flood_prediction(
     prediction: Dict[str, Any],
     weather_from,
     weather_to,
-    sensor_reading_id: Optional[str] = None,
 ) -> FloodPrediction:
     
     today=date.today() #Ngày AI chạy
 
     record = FloodPrediction(
-        sensor_reading_id=sensor_reading_id,
-
         lead1_probability=prediction["forecast"]["day_1"]["probability"],
         lead2_probability=prediction["forecast"]["day_2"]["probability"],
         lead3_probability=prediction["forecast"]["day_3"]["probability"],
