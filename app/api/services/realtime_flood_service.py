@@ -123,14 +123,24 @@ def _wind_to_uv(wind_speed: float, wind_direction: float) -> tuple[float, float]
     return u10, v10
 
 
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 def get_weather_history_by_area(
     db: Session,
     area_id: str,
 ) -> list[WeatherData]:
 
+    today_vn = datetime.now(
+        ZoneInfo("Asia/Ho_Chi_Minh")
+    ).date()
+
     return (
         db.query(WeatherData)
-        .filter(WeatherData.area_id == area_id)
+        .filter(
+            WeatherData.area_id == area_id,
+            WeatherData.time < today_vn
+        )
         .order_by(WeatherData.time.desc())
         .limit(192)
         .all()
