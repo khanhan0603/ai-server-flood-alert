@@ -5,7 +5,7 @@ BENCHMARK_EVENTS = [
         "start": "2025-06-10",
         "end":   "2025-06-14",
         "neg_before_date":       "2025-05-31",  # 10 ngày trước start
-        "neg_after_date":        "2025-06-24",  # 10 ngày sau end
+        "neg_after_date": "2025-07-15",  # 31 ngày sau end
         "provinces":             ["quang_tri", "hue"],
         "neg_spatial_provinces": ["an_giang", "can_tho"],
     },
@@ -15,7 +15,7 @@ BENCHMARK_EVENTS = [
         "start": "2025-07-20",
         "end":   "2025-07-23",
         "neg_before_date":       "2025-07-10",  # 10 ngày trước start
-        "neg_after_date":        "2025-08-02",  # 10 ngày sau end (khác tỉnh E008 nên không đụng)
+        "neg_after_date": "2025-08-25",  # 33 ngày sau end
         "provinces":             ["hung_yen", "ninh_binh", "thanh_hoa", "nghe_an"],
         "neg_spatial_provinces": ["an_giang", "can_tho", "ca_mau"],
     },
@@ -67,7 +67,7 @@ BENCHMARK_EVENTS = [
         "start": "2025-11-16",
         "end":   "2025-11-22",
         "neg_before_date":       "2025-11-06",  # 10 ngày trước start
-        "neg_after_date":        "2025-12-02",  # 10 ngày sau end
+        "neg_after_date": "2025-12-10",  # 18 ngày sau end
         "provinces":             ["dak_lak", "gia_lai", "khanh_hoa", "lam_dong"],
         "neg_spatial_provinces": ["ha_noi", "bac_ninh", "hung_yen"],
     },
@@ -77,7 +77,7 @@ BENCHMARK_EVENTS = [
         "start": "2025-07-28",
         "end":   "2025-08-02",
         "neg_before_date":       "2025-07-18",  # 10 ngày trước start
-        "neg_after_date":        "2025-08-12",  # 10 ngày sau end
+        "neg_after_date": "2025-09-05",  # 34 ngày sau end
         "provinces":             ["son_la"],
         "neg_spatial_provinces": ["an_giang", "can_tho"],
     },

@@ -1,14 +1,21 @@
 """
 analyze_benchmark.py
-Đánh giá model dự báo lũ bằng các metric khoa học:
-  - TSS (True Skill Statistic) — Allouche et al. 2006
-  - CSI (Critical Success Index / IoU) — chuẩn flood susceptibility modeling
-  - F1-score
-  - Sensitivity (Recall), Specificity
+Đánh giá model dự báo lũ — đơn vị tỉnh-ngày (province-day)
 
-Định nghĩa nhãn:
+Lý do dùng province-day thay vì point-level:
+  Ground truth (White Book) chỉ ghi nhận ở cấp tỉnh, không có tọa độ cụ thể.
+  Gán nhãn flood cho từng điểm lưới trong tỉnh là quá thô — phạt oan model
+  ở các vùng núi/cao nguyên không thực sự ngập trong cùng tỉnh.
+  → Chuyển sang province-day: 1 tỉnh trong 1 ngày = có lũ nếu ≥ 30% điểm báo MEDIUM+
+
+Metric khoa học:
+  - TSS (True Skill Statistic) — Allouche et al. 2006
+  - CSI (Critical Success Index) — Lee et al. 2017
+  - F1-score, Sensitivity, Specificity
+
+Nhãn:
   event thật  → label = 1 (flood)
-  control sau → label = 0 (non-flood) — sạch nhất, 10+ ngày sau lũ
+  control sau → label = 0 (non-flood) — cách event 10+ ngày, hoàn lưu đã tan
 
 Chạy: python analyze_benchmark.py --folder benchmark_results
 """
@@ -21,7 +28,12 @@ import pandas as pd
 # ── Cấu hình ────────────────────────────────────────────────────────────────
 ALERT_LABELS = {"HIGH", "MEDIUM"}
 HIGH_LABELS  = {"HIGH"}
-EVENTS = [f"E{str(i).zfill(3)}" for i in range(1, 9)]  # bỏ E009 
+
+# Ngưỡng: tỉnh-ngày = có lũ nếu ≥ 30% điểm báo MEDIUM+
+# Khớp với đặc tính recall-first của model (threshold=0.35)
+PROVINCE_ALERT_THRESHOLD = 0.30
+
+EVENTS = [f"E{str(i).zfill(3)}" for i in range(1, 9)]  # E001–E008, bỏ E009 (lũ quét)
 
 EVENT_NAMES = {
     "E001": "Bão Wutip",
@@ -32,7 +44,6 @@ EVENT_NAMES = {
     "E006": "Bão FengShen",
     "E007": "Mưa lớn Miền Trung",
     "E008": "Lũ sông Mã",
-    "E009": "Lũ quét Điện Biên",
 }
 
 FILE_TYPES = {
@@ -43,7 +54,6 @@ FILE_TYPES = {
 }
 
 BUCKETS = ["overall", "day_1", "day_2", "day_3"]
-
 BUCKET_LABELS = {
     "overall": "TỔNG HỢP (Overall Risk)",
     "day_1":   "DỰ BÁO TRƯỚC 1 NGÀY",
@@ -60,96 +70,131 @@ def load_json(path):
         return json.load(f)
 
 
-# ── Parse 1 file → stats theo overall + day_1/2/3 ───────────────────────────
-def parse_file(data: dict) -> dict:
-    buckets = {b: [] for b in BUCKETS}
+# ── Parse 1 file → danh sách province-day ───────────────────────────────────
+def parse_province_days(data: dict) -> list:
+    """
+    Trả về list các dict:
+    {
+        "date": "2025-06-10",
+        "province": "hue",
+        "overall":  True/False,  # tỉnh-ngày có lũ theo overall_risk
+        "day_1":    True/False,
+        "day_2":    True/False,
+        "day_3":    True/False,
+        "avg_prob": float,
+    }
+    Mỗi phần tử = 1 tỉnh × 1 ngày
+    """
+    # Gom theo (date, province)
+    groups = {}
 
     for item in data.get("results", []):
+        date     = item.get("date", "")
+        province = item.get("province", "")
+        key      = (date, province)
+
+        if key not in groups:
+            groups[key] = {b: [] for b in BUCKETS}
+            groups[key]["probs"] = []
+
         points = item.get("summary", {}).get("results", [])
         for point in points:
             pred = point.get("prediction")
             if not pred:
                 continue
 
+            # Overall
             if pred.get("overall_risk"):
-                buckets["overall"].append({
-                    "risk_level":        pred["overall_risk"],
-                    "flood_probability": pred.get("probability", 0),
-                })
+                groups[key]["overall"].append(pred["overall_risk"])
+                groups[key]["probs"].append(pred.get("probability", 0))
 
+            # Forecast theo ngày
             forecast = pred.get("forecast", {})
             for day in ["day_1", "day_2", "day_3"]:
                 dp = forecast.get(day, {})
                 if dp.get("risk_level"):
-                    buckets[day].append({
-                        "risk_level":        dp["risk_level"],
-                        "flood_probability": dp.get("probability", 0),
-                    })
+                    groups[key][day].append(dp["risk_level"])
 
-    def calc(lst):
-        total = len(lst)
-        if total == 0:
-            return {
-                "total": 0, "high": 0, "alert": 0,
-                "high_pct": 0.0, "alert_pct": 0.0, "avg_prob": 0.0,
-            }
-        high  = sum(1 for p in lst if p["risk_level"] in HIGH_LABELS)
-        alert = sum(1 for p in lst if p["risk_level"] in ALERT_LABELS)
-        avg_p = sum(p["flood_probability"] for p in lst) / total
-        return {
-            "total":     total,
-            "high":      high,
-            "alert":     alert,
-            "high_pct":  round(high  / total * 100, 1),
-            "alert_pct": round(alert / total * 100, 1),
-            "avg_prob":  round(avg_p  * 100, 1),
-        }
+    # Chuyển thành province-day records
+    records = []
+    for (date, province), g in groups.items():
+        def is_alert(risk_list):
+            if not risk_list:
+                return None  # không có data
+            alert_count = sum(1 for r in risk_list if r in ALERT_LABELS)
+            return (alert_count / len(risk_list)) >= PROVINCE_ALERT_THRESHOLD
 
-    return {k: calc(v) for k, v in buckets.items()}
+        records.append({
+            "date":     date,
+            "province": province,
+            "overall":  is_alert(g["overall"]),
+            "day_1":    is_alert(g["day_1"]),
+            "day_2":    is_alert(g["day_2"]),
+            "day_3":    is_alert(g["day_3"]),
+            "avg_prob": round(sum(g["probs"]) / len(g["probs"]) * 100, 1)
+                        if g["probs"] else 0.0,
+            "n_points": len(g["overall"]),
+        })
+
+    return records
 
 
-# ── Tính TSS, CSI, F1 từ event vs control_after ─────────────────────────────
-def calc_scientific_metrics(ev: dict, ctrl_after: dict) -> dict:
+# ── Tính stats từ list province-days ────────────────────────────────────────
+def calc_stats(records: list, bucket: str) -> dict:
+    valid = [r for r in records if r[bucket] is not None]
+    total = len(valid)
+    if total == 0:
+        return {"total": 0, "alert": 0, "alert_pct": 0.0, "avg_prob": 0.0}
+
+    alert    = sum(1 for r in valid if r[bucket])
+    avg_prob = round(sum(r["avg_prob"] for r in valid) / total, 1)
+    return {
+        "total":     total,
+        "alert":     alert,
+        "alert_pct": round(alert / total * 100, 1),
+        "avg_prob":  avg_prob,
+    }
+
+
+# ── Tính TSS, CSI, F1 ────────────────────────────────────────────────────────
+def calc_metrics(ev: dict, ctrl: dict) -> dict:
     """
-    ev          : stats của event thật   (label = 1)
-    ctrl_after  : stats của control sau  (label = 0)
+    ev   = stats province-day của event thật  (label=1)
+    ctrl = stats province-day của control sau (label=0)
 
-    TP = event bị cảnh báo MEDIUM+      (cảnh báo đúng khi có lũ)
-    FN = event không bị cảnh báo        (bỏ sót khi có lũ)
-    FP = control sau bị cảnh báo MEDIUM+(cảnh báo sai khi không có lũ)
-    TN = control sau không bị cảnh báo  (đúng khi không có lũ)
+    TP = event province-day bị cảnh báo
+    FN = event province-day không bị cảnh báo
+    FP = control province-day bị cảnh báo (false alarm)
+    TN = control province-day không bị cảnh báo
     """
-    if ev["total"] == 0 or ctrl_after["total"] == 0:
+    if ev["total"] == 0 or ctrl["total"] == 0:
         return {"TSS": None, "CSI": None, "F1": None,
                 "Sensitivity": None, "Specificity": None,
                 "TP": 0, "FN": 0, "FP": 0, "TN": 0}
 
     TP = ev["alert"]
     FN = ev["total"] - ev["alert"]
-    FP = ctrl_after["alert"]
-    TN = ctrl_after["total"] - ctrl_after["alert"]
+    FP = ctrl["alert"]
+    TN = ctrl["total"] - ctrl["alert"]
 
-    sensitivity = TP / (TP + FN) if (TP + FN) > 0 else 0  # Recall
-    specificity = TN / (TN + FP) if (TN + FP) > 0 else 0
-    tss         = round(sensitivity + specificity - 1, 3)
-    csi         = round(TP / (TP + FP + FN), 3) if (TP + FP + FN) > 0 else 0
-    f1          = round(2*TP / (2*TP + FP + FN), 3) if (2*TP + FP + FN) > 0 else 0
+    sens = TP / (TP + FN) if (TP + FN) > 0 else 0
+    spec = TN / (TN + FP) if (TN + FP) > 0 else 0
+    tss  = round(sens + spec - 1, 3)
+    csi  = round(TP / (TP + FP + FN), 3) if (TP + FP + FN) > 0 else 0
+    f1   = round(2*TP / (2*TP + FP + FN), 3) if (2*TP + FP + FN) > 0 else 0
 
     return {
         "TP": TP, "FN": FN, "FP": FP, "TN": TN,
-        "Sensitivity": round(sensitivity, 3),
-        "Specificity":  round(specificity, 3),
-        "TSS":          tss,
-        "CSI":          csi,
-        "F1":           f1,
+        "Sensitivity": round(sens, 3),
+        "Specificity": round(spec, 3),
+        "TSS": tss, "CSI": csi, "F1": f1,
     }
 
 
 def tss_verdict(tss, bucket):
-    """Ngưỡng TSS theo Allouche et al. 2006 và thực tiễn flood modeling."""
     if tss is None:
         return "N/A"
-    if bucket == "day_1":
+    if bucket in ("overall", "day_1"):
         if tss >= 0.5:   return "✅ TỐT (TSS ≥ 0.5)"
         elif tss >= 0.2: return "⚠️  KHÁ (TSS 0.2–0.5)"
         elif tss >= 0:   return "⚠️  YẾU (TSS 0–0.2)"
@@ -159,172 +204,172 @@ def tss_verdict(tss, bucket):
         elif tss >= 0.1: return "⚠️  KHÁ (TSS 0.1–0.3)"
         elif tss >= 0:   return "⚠️  Suy giảm bình thường"
         else:            return "⚠️  Khó phân biệt 2 ngày — xem Limitations"
-    elif bucket == "day_3":
+    else:  # day_3
         if tss >= 0.1:   return "✅ Còn tín hiệu (TSS ≥ 0.1)"
         elif tss >= 0:   return "⚠️  Suy giảm rõ ở 3 ngày — đặc tính tự nhiên"
         else:            return "⚠️  3 ngày khó dự báo — ghi Limitations"
-    else:  # overall
-        if tss >= 0.4:   return "✅ TỐT (TSS ≥ 0.4)"
-        elif tss >= 0.2: return "⚠️  KHÁ (TSS 0.2–0.4)"
-        elif tss >= 0:   return "⚠️  YẾU"
-        else:            return "❌ CHƯA ĐẠT"
 
 
-# ── Đọc tất cả file → DataFrame ─────────────────────────────────────────────
-def analyze(folder: str) -> pd.DataFrame:
-    rows = []
+# ── Đọc tất cả file → dict records ──────────────────────────────────────────
+def load_all(folder: str) -> dict:
+    """
+    Trả về:
+    {
+        eid: {
+            ftype: [province-day records]
+        }
+    }
+    """
+    result = {}
     for eid in EVENTS:
+        result[eid] = {}
         for ftype in FILE_TYPES:
             suffix = "" if ftype == "event" else f"_{ftype}"
             path   = os.path.join(folder, f"{eid}{suffix}.json")
             data   = load_json(path)
             if data is None:
                 continue
-            stats = parse_file(data)
-            for bucket, s in stats.items():
-                rows.append({
-                    "event":      eid,
-                    "event_name": EVENT_NAMES.get(eid, eid),
-                    "type":       ftype,
-                    "type_label": FILE_TYPES[ftype],
-                    "bucket":     bucket,
-                    **s,
-                })
-    return pd.DataFrame(rows)
+            result[eid][ftype] = parse_province_days(data)
+    return result
 
 
 # ── In báo cáo ───────────────────────────────────────────────────────────────
-def print_report(df: pd.DataFrame):
+def print_report(all_data: dict):
     W = 74
 
     for bucket in BUCKETS:
-        bdf = df[df["bucket"] == bucket]
         print(f"\n{'='*W}")
         print(f"  {BUCKET_LABELS[bucket]}")
+        print(f"  Đơn vị: tỉnh-ngày | Ngưỡng cảnh báo: ≥{int(PROVINCE_ALERT_THRESHOLD*100)}% điểm MEDIUM+")
         print(f"{'='*W}")
 
         # ── Chi tiết từng event ──────────────────────────────────────
+        total_ev_all   = {"total": 0, "alert": 0}
+        total_ctrl_all = {"total": 0, "alert": 0}
+
         for eid in EVENTS:
-            sub = bdf[bdf["event"] == eid]
-            if sub.empty:
+            edata = all_data.get(eid, {})
+            if "event" not in edata or "neg_after" not in edata:
                 continue
 
-            ev_row  = sub[sub["type"] == "event"]
-            aft_row = sub[sub["type"] == "neg_after"]
-            if ev_row.empty or aft_row.empty:
-                continue
-
-            ev_stats  = ev_row.iloc[0].to_dict()
-            aft_stats = aft_row.iloc[0].to_dict()
-            m = calc_scientific_metrics(ev_stats, aft_stats)
+            ev_stats   = calc_stats(edata["event"],    bucket)
+            ctrl_stats = calc_stats(edata["neg_after"], bucket)
+            m = calc_metrics(ev_stats, ctrl_stats)
 
             print(f"\n  {eid} {EVENT_NAMES.get(eid, eid)}")
             print(f"  {'─'*64}")
-            print(f"  {'Loại':<22} {'Điểm':>6}  {'HIGH':>10}  {'MEDIUM+':>10}  {'Prob TB':>8}")
+            print(f"  {'Loại':<22} {'Tỉnh-ngày':>10}  {'Cảnh báo':>12}  {'Prob TB':>8}")
             print(f"  {'─'*64}")
 
             for ftype, flabel in FILE_TYPES.items():
-                row = sub[sub["type"] == ftype]
-                if row.empty:
+                if ftype not in edata:
                     continue
-                r = row.iloc[0]
+                s = calc_stats(edata[ftype], bucket)
                 print(
-                    f"  {flabel:<22} {int(r['total']):>6}  "
-                    f"{int(r['high']):>4} ({r['high_pct']:>5.1f}%)  "
-                    f"{int(r['alert']):>4} ({r['alert_pct']:>5.1f}%)  "
-                    f"{r['avg_prob']:>7.1f}%"
+                    f"  {flabel:<22} {s['total']:>10}  "
+                    f"{s['alert']:>5} ({s['alert_pct']:>5.1f}%)  "
+                    f"{s['avg_prob']:>7.1f}%"
                 )
 
-            # In confusion matrix mini + metrics
             print(f"  {'─'*64}")
-            print(f"  Confusion (event vs control sau):  "
-                  f"TP={m['TP']}  FN={m['FN']}  FP={m['FP']}  TN={m['TN']}")
             if m["TSS"] is not None:
+                print(f"  TP={m['TP']}  FN={m['FN']}  FP={m['FP']}  TN={m['TN']}")
                 print(f"  Sensitivity={m['Sensitivity']:.3f}  "
                       f"Specificity={m['Specificity']:.3f}  "
                       f"TSS={m['TSS']:.3f}  CSI={m['CSI']:.3f}  F1={m['F1']:.3f}")
 
-        # ── Tổng kết toàn bộ 9 event ─────────────────────────────────
+            total_ev_all["total"] += ev_stats["total"]
+            total_ev_all["alert"] += ev_stats["alert"]
+            total_ctrl_all["total"] += ctrl_stats["total"]
+            total_ctrl_all["alert"] += ctrl_stats["alert"]
+
+        # ── Tổng kết ─────────────────────────────────────────────────
+        total_ev_all["alert_pct"]   = round(
+            total_ev_all["alert"]   / total_ev_all["total"]   * 100, 1
+        ) if total_ev_all["total"] else 0
+        total_ctrl_all["alert_pct"] = round(
+            total_ctrl_all["alert"] / total_ctrl_all["total"] * 100, 1
+        ) if total_ctrl_all["total"] else 0
+
+        m_total = calc_metrics(total_ev_all, total_ctrl_all)
+
         print(f"\n  {'─'*64}")
-        print(f"  TỔNG 9 SỰ KIỆN — METRIC KHOA HỌC (event vs control sau)")
+        print(f"  TỔNG 8 SỰ KIỆN — PROVINCE-DAY LEVEL")
         print(f"  {'─'*64}")
-        print(f"  {'Loại':<22} {'Điểm':>6}  {'HIGH':>10}  {'MEDIUM+':>10}  {'Prob TB':>8}")
-        print(f"  {'─'*64}")
+        print(f"  Sự kiện thật : {total_ev_all['total']:>4} tỉnh-ngày  "
+              f"→ {total_ev_all['alert']} cảnh báo ({total_ev_all['alert_pct']:.1f}%)")
+        print(f"  Control sau  : {total_ctrl_all['total']:>4} tỉnh-ngày  "
+              f"→ {total_ctrl_all['alert']} cảnh báo ({total_ctrl_all['alert_pct']:.1f}%)")
 
-        summary_stats = {}
-        for ftype, flabel in FILE_TYPES.items():
-            sub   = bdf[bdf["type"] == ftype]
-            if sub.empty:
-                continue
-            total    = int(sub["total"].sum())
-            high     = int(sub["high"].sum())
-            alert    = int(sub["alert"].sum())
-            avg_prob = round(sub["avg_prob"].mean(), 1)
-            hp = round(high  / total * 100, 1) if total else 0
-            ap = round(alert / total * 100, 1) if total else 0
-            summary_stats[ftype] = {
-                "total": total, "high": high, "alert": alert,
-                "high_pct": hp, "alert_pct": ap, "avg_prob": avg_prob,
-            }
-            print(
-                f"  {flabel:<22} {total:>6}  "
-                f"{high:>4} ({hp:>5.1f}%)  "
-                f"{alert:>4} ({ap:>5.1f}%)  "
-                f"{avg_prob:>7.1f}%"
-            )
-
-        # Tính metric tổng hợp
-        if "event" in summary_stats and "neg_after" in summary_stats:
-            m_total = calc_scientific_metrics(
-                summary_stats["event"],
-                summary_stats["neg_after"],
-            )
-            print(f"\n  {'─'*64}")
-            print(f"  METRIC KHOA HỌC TỔNG HỢP (Allouche et al. 2006)")
+        if m_total["TSS"] is not None:
+            print(f"\n  METRIC KHOA HỌC TỔNG HỢP (Allouche et al. 2006)")
             print(f"  {'─'*64}")
-            print(f"  TP={m_total['TP']:>6}  FN={m_total['FN']:>6}  "
-                  f"FP={m_total['FP']:>6}  TN={m_total['TN']:>6}")
+            print(f"  TP={m_total['TP']:>4}  FN={m_total['FN']:>4}  "
+                  f"FP={m_total['FP']:>4}  TN={m_total['TN']:>4}")
             print(f"  Sensitivity (Recall) = {m_total['Sensitivity']:.3f}")
             print(f"  Specificity          = {m_total['Specificity']:.3f}")
-            print(f"  TSS                  = {m_total['TSS']:.3f}   "
-                  f"(tốt ≥ 0.5, chấp nhận 0.2–0.5, kém < 0.2)")
-            print(f"  CSI (IoU)            = {m_total['CSI']:.3f}   "
-                  f"(tốt ≥ 0.5, chấp nhận 0.3–0.5, kém < 0.3)")
+            print(f"  TSS                  = {m_total['TSS']:.3f}  "
+                  f"(tốt ≥ 0.5 | chấp nhận 0.2–0.5 | kém < 0.2)")
+            print(f"  CSI (IoU)            = {m_total['CSI']:.3f}  "
+                  f"(tốt ≥ 0.5 | chấp nhận 0.3–0.5 | kém < 0.3)")
             print(f"  F1-score             = {m_total['F1']:.3f}")
             print(f"\n  Kết luận: {tss_verdict(m_total['TSS'], bucket)}")
 
+    # ── Ghi chú phương pháp ──────────────────────────────────────────
     print(f"\n{'='*W}")
     print("  GHI CHÚ PHƯƠNG PHÁP")
     print(f"{'='*W}")
-    print("  - TSS: True Skill Statistic (Allouche et al. 2006)")
-    print("    Không bị ảnh hưởng bởi mất cân bằng dữ liệu")
-    print("    TSS = Sensitivity + Specificity - 1")
-    print("  - CSI: Critical Success Index (Lee et al. 2017)")
-    print("    CSI = TP / (TP + FP + FN)")
-    print("  - Control sau (neg_after) dùng làm nhãn 0 vì cách event")
-    print("    tối thiểu 10 ngày, hoàn lưu bão đã tan hoàn toàn")
-    print("  - Control trước (neg_before) KHÔNG dùng làm nhãn 0 vì")
-    print("    điều kiện tiền bão tích lũy làm bias kết quả")
+    print(f"  Đơn vị đánh giá : Province-day (tỉnh × ngày)")
+    print(f"  Ngưỡng cảnh báo : ≥ {int(PROVINCE_ALERT_THRESHOLD*100)}% điểm lưới trong tỉnh báo MEDIUM+")
+    print(f"  Lý do           : Ground truth (White Book 2025) chỉ ghi nhận")
+    print(f"                    ở cấp tỉnh — không có tọa độ ngập cụ thể.")
+    print(f"                    Gán nhãn theo điểm lưới sẽ phạt oan model")
+    print(f"                    ở vùng núi/cao nguyên trong cùng tỉnh.")
+    print(f"  TSS             : True Skill Statistic (Allouche et al. 2006)")
+    print(f"                    TSS = Sensitivity + Specificity - 1")
+    print(f"                    Không bị ảnh hưởng bởi mất cân bằng dữ liệu")
+    print(f"  CSI             : Critical Success Index (Lee et al. 2017)")
+    print(f"                    CSI = TP / (TP + FP + FN)")
+    print(f"  Control sau     : Cách event tối thiểu 10 ngày → hoàn lưu bão tan")
+    print(f"  Control trước   : KHÔNG dùng làm nhãn 0 — tiền bão tích lũy bias")
     print(f"{'='*W}\n")
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--folder", "-f", default="benchmark_results")
-    parser.add_argument("--csv",    "-o", default=None)
+    parser.add_argument("--folder",    "-f", default="benchmark_results")
+    parser.add_argument("--threshold", "-t", type=float, default=0.30,
+                        help="Ngưỡng tỉ lệ điểm MEDIUM+ để coi tỉnh-ngày là có lũ (default: 0.30)")
+    parser.add_argument("--csv",       "-o", default=None)
     args = parser.parse_args()
 
-    df = analyze(args.folder)
+    global PROVINCE_ALERT_THRESHOLD
+    PROVINCE_ALERT_THRESHOLD = args.threshold
 
-    if df.empty:
+    all_data = load_all(args.folder)
+
+    if not any(all_data.values()):
         print("Không tìm thấy file JSON nào trong:", args.folder)
         return
 
-    print_report(df)
+    print_report(all_data)
 
+    # Lưu CSV tổng hợp nếu cần
     if args.csv:
-        df.to_csv(args.csv, index=False, encoding="utf-8-sig")
+        rows = []
+        for eid, edata in all_data.items():
+            for ftype, records in edata.items():
+                for bucket in BUCKETS:
+                    s = calc_stats(records, bucket)
+                    rows.append({
+                        "event": eid,
+                        "event_name": EVENT_NAMES.get(eid, eid),
+                        "type": ftype,
+                        "bucket": bucket,
+                        **s,
+                    })
+        pd.DataFrame(rows).to_csv(args.csv, index=False, encoding="utf-8-sig")
         print(f"Đã lưu CSV: {args.csv}")
 
 
