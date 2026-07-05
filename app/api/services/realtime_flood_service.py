@@ -16,8 +16,9 @@ from app.internal.domain.iot_device import IotDevice
 from app.internal.domain.weather_data import WeatherData
 
 from datetime import date, datetime, timedelta
-from datetime import datetime
 from zoneinfo import ZoneInfo
+from sqlalchemy import func
+
 
 from app.internal.domain.flood_prediction import FloodPrediction
 from concurrent.futures import ThreadPoolExecutor,as_completed
@@ -32,6 +33,35 @@ def get_all_area_ids_with_weather(db: Session) -> list[str]:
     )
 
     return [str(row[0]) for row in rows if row[0] is not None]
+
+# Tạo hàm lấy danh sách area còn thiếu.
+def get_missing_area_ids(
+    db: Session,
+) -> list[str]:
+
+    today = datetime.now(
+        ZoneInfo("Asia/Ho_Chi_Minh")
+    ).date()
+
+    all_area_ids = set(
+        get_all_area_ids_with_weather(db)
+    )
+
+    predicted_area_ids = {
+        str(area_id)
+        for (area_id,) in (
+            db.query(FloodPrediction.area_id)
+            .filter(
+                func.date(FloodPrediction.predicted_at) == today
+            )
+            .distinct()
+            .all()
+        )
+    }
+
+    return list(
+        all_area_ids - predicted_area_ids
+    )
 
 def _to_float(value: Any) -> Optional[float]:
     if value is None:
@@ -310,6 +340,112 @@ def save_flood_prediction(
 
     return record
 
+# Nó sẽ:
+# Lấy danh sách area còn thiếu bằng get_missing_area_ids().
+# Chạy lại prediction chỉ cho các area đó.
+# Trả về thống kê để sau này log và tạo notification.
+def recover_missing_areas() -> Dict[str, int]:
+    MAX_RECOVERY_ATTEMPTS = 3 #Retry vá lại dữ liệu tối đa 3 lần
+
+    total_recovered = 0
+    total_errors = 0
+    logger.info("START RECOVERY")
+
+    db = get_db_session()
+
+    try:
+        missing_area_ids = get_missing_area_ids(db)
+    finally:
+        db.close()
+
+    if not missing_area_ids:
+        logger.info("RECOVERY: no missing areas")
+
+        return {
+            "attempts": 0,
+            "recovered": 0,
+            "errors": 0,
+            "remaining_missing": 0,
+        }
+
+    recovered = 0
+    errors = 0
+
+    logger.info(
+        "RECOVERY: found %s missing areas",
+        len(missing_area_ids),
+    )
+    attempt_used=0 #số lần retry thực tế
+    for attempt in range(1, MAX_RECOVERY_ATTEMPTS + 1):
+        attempt_used=attempt
+        db = get_db_session()
+
+        try:
+            missing_area_ids = get_missing_area_ids(db)
+        finally:
+            db.close()
+
+        if not missing_area_ids:
+            logger.info(
+                "RECOVERY SUCCESS after %s attempt(s)",
+                attempt - 1,
+            )
+            break
+
+        logger.info(
+            "RECOVERY ATTEMPT %s: %s missing areas",
+            attempt,
+            len(missing_area_ids),
+        )
+
+        recovered = 0
+        errors = 0
+
+        for area_id in missing_area_ids:
+
+            try:
+                result = _predict_one_area(area_id)
+
+                if result.get("status") == "success":
+                    recovered += 1
+                else:
+                    errors += 1
+
+            except Exception:
+                errors += 1
+
+                logger.exception(
+                    "Recovery failed area=%s",
+                    area_id,
+                )
+
+        total_recovered += recovered
+        total_errors += errors
+
+    logger.info(
+        "RECOVERY FINISHED recovered=%s errors=%s",
+        recovered,
+        errors,
+    )
+    #Để admin biết còn thiếu bao nhiêu khu vực chưa predict
+    db = get_db_session()
+
+    try:
+        final_missing = len(get_missing_area_ids(db))
+    finally:
+        db.close()
+        
+    logger.info(
+        "RECOVERY COMPLETED: remaining_missing=%s",
+        final_missing,
+    )
+    return {
+        "attempts": attempt_used, #số lần retry thực tế
+        "recovered": total_recovered, #số khu vực thiếu dữ liệu được vá
+        "errors": total_errors, #số lỗi
+        "remaining_missing": final_missing, #số khu vực chưa vá dữ liệu
+    }
+
 def predict_all_areas(
     offset: int = 0,
     limit: int = 500
@@ -443,7 +579,7 @@ def predict_all_areas(
 
         actual = (
             db.query(FloodPrediction.area_id)
-            .filter(FloodPrediction.predicted_at >= today)
+            .filter(func.date(FloodPrediction.predicted_at) == today)
             .distinct()
             .count()
         )
@@ -455,6 +591,17 @@ def predict_all_areas(
 
     finally:
         db.close()
+        
+    # Sau khi predict_all_areas() chạy xong, tự động chạy recovery 1 lần.
+    recovery_result = recover_missing_areas()
+
+    logger.info(
+        "Recovery summary: attempts=%s recovered=%s errors=%s remaining_missing=%s",
+        recovery_result["attempts"],
+        recovery_result["recovered"],
+        recovery_result["errors"],
+        recovery_result["remaining_missing"],
+    )
 
     return {
         "status": "success",
@@ -463,6 +610,7 @@ def predict_all_areas(
         "high_risk": high_risk,
         "errors": errors,
         "duration_ms": duration_ms,
+        "recovery": recovery_result,
     }
 
 def _predict_one_area(area_id: str) -> Dict[str, Any]:

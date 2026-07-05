@@ -40,3 +40,4 @@ dist/
 *.egg-info/
 
 benchmark_results/
+ket_qua*.csv

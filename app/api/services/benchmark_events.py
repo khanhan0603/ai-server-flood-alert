@@ -4,8 +4,8 @@ BENCHMARK_EVENTS = [
         "name": "Flood after Typhoon No.1 (Wutip)",
         "start": "2025-06-10",
         "end":   "2025-06-14",
-        "neg_before_date":       "2025-05-15",  # mùa khô, 26 ngày trước start
-        "neg_after_date":        "2025-07-15",  # 31 ngày sau end, qua cao điểm mưa tháng 6
+        "neg_before_date":       "2025-05-31",  # 10 ngày trước start
+        "neg_after_date":        "2025-06-24",  # 10 ngày sau end
         "provinces":             ["quang_tri", "hue"],
         "neg_spatial_provinces": ["an_giang", "can_tho"],
     },
@@ -14,8 +14,8 @@ BENCHMARK_EVENTS = [
         "name": "Flood after Typhoon No.3 (Wipha)",
         "start": "2025-07-20",
         "end":   "2025-07-23",
-        "neg_before_date":       "2025-07-05",  # giữ nguyên, đủ sạch
-        "neg_after_date":        "2025-08-25",  # 33 ngày sau end, tránh E003 start 24/08 → dùng 25/08
+        "neg_before_date":       "2025-07-10",  # 10 ngày trước start
+        "neg_after_date":        "2025-08-02",  # 10 ngày sau end (khác tỉnh E008 nên không đụng)
         "provinces":             ["hung_yen", "ninh_binh", "thanh_hoa", "nghe_an"],
         "neg_spatial_provinces": ["an_giang", "can_tho", "ca_mau"],
     },
@@ -24,8 +24,8 @@ BENCHMARK_EVENTS = [
         "name": "Flood after Typhoon No.5 (Kajiki)",
         "start": "2025-08-24",
         "end":   "2025-08-27",
-        "neg_before_date":       "2025-08-13",  # giữ nguyên
-        "neg_after_date":        "2025-09-15",  # giữ nguyên, 19 ngày sau end → OK
+        "neg_before_date":       "2025-08-14",  # 10 ngày trước start
+        "neg_after_date":        "2025-09-06",  # 10 ngày sau end
         "provinces":             ["thanh_hoa", "nghe_an", "ha_tinh", "ninh_binh",
                                   "ha_noi", "bac_ninh", "quang_ninh", "phu_tho"],
         "neg_spatial_provinces": ["an_giang", "can_tho", "ca_mau", "dong_thap"],
@@ -35,8 +35,8 @@ BENCHMARK_EVENTS = [
         "name": "Flood after Typhoon No.10 (Bualoi)",
         "start": "2025-09-27",
         "end":   "2025-10-02",
-        "neg_before_date":       "2025-09-15",  # 12 ngày trước, sau E003 neg_after 15/09 → sát nhưng khác tỉnh
-        "neg_after_date":        "2025-10-19",  # giữ nguyên, sau E005 end 07/10 → OK
+        "neg_before_date":       "2025-09-17",  # 10 ngày trước start, sau E003 neg_after (06/09) đủ xa
+        "neg_after_date":        "2025-10-12",  # 10 ngày sau end, trước E006 start (22/10) đủ xa
         "provinces":             ["thanh_hoa", "nghe_an", "ha_tinh", "hue"],
         "neg_spatial_provinces": ["an_giang", "can_tho", "ca_mau"],
     },
@@ -45,8 +45,8 @@ BENCHMARK_EVENTS = [
         "name": "Flood after Typhoon No.11 (Matmo)",
         "start": "2025-10-06",
         "end":   "2025-10-07",
-        "neg_before_date":       "2025-09-15",  # dùng chung với E004, khác tỉnh → OK
-        "neg_after_date":        "2025-10-19",  # giữ nguyên
+        "neg_before_date":       "2025-09-26",  # 10 ngày trước start (khác tỉnh E004 nên không đụng)
+        "neg_after_date":        "2025-10-17",  # 10 ngày sau end
         "provinces":             ["thai_nguyen", "bac_ninh", "ha_noi", "tuyen_quang",
                                   "lang_son", "cao_bang", "quang_ninh", "phu_tho"],
         "neg_spatial_provinces": ["an_giang", "can_tho", "ca_mau", "dong_thap"],
@@ -56,8 +56,8 @@ BENCHMARK_EVENTS = [
         "name": "Flood after Typhoon No.12 (FengShen)",
         "start": "2025-10-22",
         "end":   "2025-11-03",
-        "neg_before_date":       "2025-10-12",  # giữ nguyên
-        "neg_after_date":        "2025-11-20",  # 17 ngày sau end, sau E007 start 16/11 → dùng tỉnh khác E007
+        "neg_before_date":       "2025-10-12",  # 10 ngày trước start, sau E004 neg_after (12/10) vừa khít
+        "neg_after_date":        "2025-11-13",  # 10 ngày sau end, trước E007 start (16/11) đủ xa
         "provinces":             ["quang_tri", "hue", "da_nang", "quang_ngai"],
         "neg_spatial_provinces": ["an_giang", "can_tho", "ca_mau"],
     },
@@ -66,8 +66,8 @@ BENCHMARK_EVENTS = [
         "name": "Central Vietnam Heavy Rain Event",
         "start": "2025-11-16",
         "end":   "2025-11-22",
-        "neg_before_date":       "2025-11-06",  # giữ nguyên
-        "neg_after_date":        "2025-12-10",  # 18 ngày sau end, tháng 12 miền Trung ít mưa hơn
+        "neg_before_date":       "2025-11-06",  # 10 ngày trước start
+        "neg_after_date":        "2025-12-02",  # 10 ngày sau end
         "provinces":             ["dak_lak", "gia_lai", "khanh_hoa", "lam_dong"],
         "neg_spatial_provinces": ["ha_noi", "bac_ninh", "hung_yen"],
     },
@@ -76,11 +76,11 @@ BENCHMARK_EVENTS = [
         "name": "Upper Ma River Flood",
         "start": "2025-07-28",
         "end":   "2025-08-02",
-        "neg_before_date":       "2025-07-10",  # 18 ngày trước, mùa mưa nhưng chưa có bão
-        "neg_after_date":        "2025-09-05",  # 34 ngày sau end, tránh xa mùa cao điểm tháng 8
+        "neg_before_date":       "2025-07-18",  # 10 ngày trước start
+        "neg_after_date":        "2025-08-12",  # 10 ngày sau end
         "provinces":             ["son_la"],
         "neg_spatial_provinces": ["an_giang", "can_tho"],
     },
-    # E009 Flash Flood Điện Biên Đông → BỎ vì là lũ quét cục bộ,
-    # không phù hợp với model dự báo lũ lụt diện rộng grid 0.1°
+    # E009 Flash Flood Điện Biên Đông → LOẠI vì là lũ quét cục bộ (địa hình dốc, vài giờ),
+    # không phù hợp model dự báo lũ lụt diện rộng ở độ phân giải grid 0.1° (~11km).
 ]
