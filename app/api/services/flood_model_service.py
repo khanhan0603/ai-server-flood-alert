@@ -15,6 +15,8 @@ models={
 
 FEATURES=joblib.load(MODEL_DIR / "feature_cols.pkl")
 THRESHOLD=float(joblib.load(MODEL_DIR / "optimal_threshold.pkl"))
+MEDIUM_THRESHOLD = THRESHOLD
+HIGH_THRESHOLD = 0.75
 
 RISK_META={
     "HIGH":{"color":"red","emoji":"🔴"},
@@ -22,10 +24,10 @@ RISK_META={
     "LOW":{"color":"green","emoji":"🟢"},
 }
 
-def prob_to_risk(prob:float)->str:
-    if prob >= THRESHOLD * 1.8:
+def prob_to_risk(prob: float) -> str:
+    if prob >= HIGH_THRESHOLD:
         return "HIGH"
-    elif prob >= THRESHOLD:
+    elif prob >= MEDIUM_THRESHOLD:
         return "MEDIUM"
     return "LOW"
 
@@ -89,13 +91,6 @@ def get_model_features()-> Dict[str,Any]:
         "total":len(FEATURES),
         "features":list(FEATURES),
     }
-    
-def get_model_features() -> Dict[str, Any]:
-    return {
-        "total": len(FEATURES),
-        "features": list(FEATURES),
-    }
-
 
 def get_model_health() -> Dict[str, Any]:
     return {
