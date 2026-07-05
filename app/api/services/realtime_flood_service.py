@@ -632,3 +632,98 @@ def _predict_one_area(area_id: str) -> Dict[str, Any]:
 
     finally:
         db.close()
+        
+        
+#Hàm để recovery cơ sở dữ liệu ngày còn thiếu
+def recover_prediction_by_date(
+    target_date: date,
+) -> Dict[str, Any]:
+
+    logger.info(
+        "START MANUAL RECOVERY target_date=%s",
+        target_date,
+    )
+
+    db = get_db_session()
+
+    try:
+        missing_area_ids = get_missing_area_ids_by_date(
+            db,
+            target_date,
+        )
+    finally:
+        db.close()
+
+    if not missing_area_ids:
+        return {
+            "status": "success",
+            "target_date": target_date.isoformat(),
+            "missing": 0,
+            "recovered": 0,
+            "errors": 0,
+        }
+
+    recovered = 0
+    errors = 0
+
+    logger.info(
+        "MANUAL RECOVERY: found %s missing areas",
+        len(missing_area_ids),
+    )
+
+    for area_id in missing_area_ids:
+
+        try:
+            result = _predict_one_area(area_id)
+
+            if result.get("status") == "success":
+                recovered += 1
+            else:
+                errors += 1
+
+        except Exception:
+            errors += 1
+
+            logger.exception(
+                "Manual recovery failed area=%s",
+                area_id,
+            )
+
+    logger.info(
+        "MANUAL RECOVERY FINISHED recovered=%s errors=%s",
+        recovered,
+        errors,
+    )
+
+    return {
+        "status": "success",
+        "target_date": target_date.isoformat(),
+        "missing": len(missing_area_ids),
+        "recovered": recovered,
+        "errors": errors,
+    }
+    
+def get_missing_area_ids_by_date(
+    db: Session,
+    target_date: date,
+) -> list[str]:
+
+    all_area_ids = set(
+        get_all_area_ids_with_weather(db)
+    )
+
+    predicted_area_ids = {
+        str(area_id)
+        for (area_id,) in (
+            db.query(FloodPrediction.area_id)
+            .filter(
+                func.date(FloodPrediction.predicted_at) == target_date
+            )
+            .distinct()
+            .all()
+        )
+    }
+
+    return list(
+        all_area_ids - predicted_area_ids
+    )
