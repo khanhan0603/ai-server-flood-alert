@@ -39,9 +39,7 @@ def get_missing_area_ids(
     db: Session,
 ) -> list[str]:
 
-    today = datetime.now(
-        ZoneInfo("Asia/Ho_Chi_Minh")
-    ).date()
+    window_start, window_end = get_current_prediction_window()
 
     all_area_ids = set(
         get_all_area_ids_with_weather(db)
@@ -52,7 +50,8 @@ def get_missing_area_ids(
         for (area_id,) in (
             db.query(FloodPrediction.area_id)
             .filter(
-                func.date(FloodPrediction.predicted_at) == today
+                FloodPrediction.predicted_at >= window_start,
+                FloodPrediction.predicted_at < window_end,
             )
             .distinct()
             .all()
@@ -573,13 +572,14 @@ def predict_all_areas(
     db = get_db_session()
 
     try:
-        today = datetime.now(
-            ZoneInfo("Asia/Ho_Chi_Minh")
-        ).date()
+        window_start, window_end = get_current_prediction_window()
 
         actual = (
             db.query(FloodPrediction.area_id)
-            .filter(func.date(FloodPrediction.predicted_at) == today)
+            .filter(
+                FloodPrediction.predicted_at >= window_start,
+                FloodPrediction.predicted_at < window_end,
+            )
             .distinct()
             .count()
         )
@@ -633,253 +633,58 @@ def _predict_one_area(area_id: str) -> Dict[str, Any]:
     finally:
         db.close()
         
-        
-#Hàm để recovery cơ sở dữ liệu ngày còn thiếu
-def recover_prediction_by_datetime(
-    predicted_at: datetime,
-) -> Dict[str, Any]:
-    
-    target_date = predicted_at.astimezone(
-        ZoneInfo("Asia/Ho_Chi_Minh")
-    ).date()
-
-    logger.info(
-        "START MANUAL RECOVERY predicted_at=%s",
-        predicted_at,
-    )
-
-    db = get_db_session()
-
-    try:
-        missing_area_ids = get_missing_area_ids_by_datetime(
-            db,
-            predicted_at,
-        )
-    finally:
-        db.close()
-
-    if not missing_area_ids:
-        return {
-            "status": "success",
-            "target_date": target_date.isoformat(),
-            "missing": 0,
-            "recovered": 0,
-            "errors": 0,
-        }
-
-    recovered = 0
-    errors = 0
-
-    logger.info(
-        "MANUAL RECOVERY: found %s missing areas",
-        len(missing_area_ids),
-    )
-
-    for area_id in missing_area_ids:
-
-        try:
-            db = get_db_session()
-
-            try:
-                result = predict_realtime_by_area_with_datetime(
-                    db,
-                    area_id,
-                    predicted_at,
-                )
-            finally:
-                db.close()
-
-            if result.get("status") == "success":
-                recovered += 1
-            else:
-                errors += 1
-
-        except Exception:
-            errors += 1
-
-            logger.exception(
-                "Manual recovery failed area=%s",
-                area_id,
-            )
-
-    logger.info(
-        "MANUAL RECOVERY FINISHED recovered=%s errors=%s",
-        recovered,
-        errors,
-    )
-
-    return {
-        "status": "success",
-        "predicted_at": predicted_at.isoformat(),
-        "missing": len(missing_area_ids),
-        "recovered": recovered,
-        "errors": errors,
-    }
-    
 from datetime import timezone
-def get_missing_area_ids_by_datetime(
-    db: Session,
-    predicted_at: datetime,
-) -> list[str]:
-    
-    local_time = predicted_at.astimezone(
-        ZoneInfo("Asia/Ho_Chi_Minh")
-    )
 
-    is_morning = local_time.hour < 12
+def get_current_prediction_window():
+    now_vn = datetime.now(ZoneInfo("Asia/Ho_Chi_Minh"))
 
-    predicted_at = predicted_at.astimezone(timezone.utc)
-
-    # Snapshot sáng: 06:30 -> trước 18:30
-    if is_morning:
-    # Job sáng (UTC 23:30 hôm trước -> 11:30 hôm nay)
-        window_start = predicted_at.replace(
-            hour=23,
-            minute=30,
-            second=0,
-            microsecond=0,
+    if now_vn.hour < 18 or (now_vn.hour == 18 and now_vn.minute < 30):
+        # Ca sáng
+        window_start = (
+            now_vn.replace(
+                hour=6,
+                minute=30,
+                second=0,
+                microsecond=0,
+            )
+            .astimezone(timezone.utc)
+            .replace(tzinfo=None)
         )
 
-        window_end = window_start + timedelta(hours=12)
+        window_end = (
+            now_vn.replace(
+                hour=18,
+                minute=30,
+                second=0,
+                microsecond=0,
+            )
+            .astimezone(timezone.utc)
+            .replace(tzinfo=None)
+        )
 
     else:
-        # Job tối (UTC 11:30 -> 23:30 cùng ngày)
-        window_start = predicted_at.replace(
-            hour=11,
-            minute=30,
-            second=0,
-            microsecond=0,
-        )
-
-        window_end = window_start + timedelta(hours=12)
-
-    all_area_ids = set(
-        get_all_area_ids_with_weather(db)
-    )
-
-    predicted_area_ids = {
-        str(area_id)
-        for (area_id,) in (
-            db.query(FloodPrediction.area_id)
-            .filter(
-                FloodPrediction.predicted_at >= window_start.replace(tzinfo=None),
-                FloodPrediction.predicted_at < window_end.replace(tzinfo=None),
+        # Ca tối
+        window_start = (
+            now_vn.replace(
+                hour=18,
+                minute=30,
+                second=0,
+                microsecond=0,
             )
-            .distinct()
-            .all()
+            .astimezone(timezone.utc)
+            .replace(tzinfo=None)
         )
-    }
 
-    return list(all_area_ids - predicted_area_ids)
-    
-def save_flood_prediction_by_datetime(
-    db: Session,
-    weather: WeatherData,
-    prediction: Dict[str, Any],
-    weather_from,
-    weather_to,
-    predicted_at: datetime,
-) -> FloodPrediction:
+        window_end = (
+            (now_vn + timedelta(days=1))
+            .replace(
+                hour=6,
+                minute=30,
+                second=0,
+                microsecond=0,
+            )
+            .astimezone(timezone.utc)
+            .replace(tzinfo=None)
+        )
 
-    today = predicted_at.astimezone(
-        ZoneInfo("Asia/Ho_Chi_Minh")
-    ).date()
-
-    record = FloodPrediction(
-        lead1_probability=prediction["forecast"]["day_1"]["probability"],
-        lead2_probability=prediction["forecast"]["day_2"]["probability"],
-        lead3_probability=prediction["forecast"]["day_3"]["probability"],
-
-        lead1=prediction["forecast"]["day_1"]["risk_level"],
-        lead2=prediction["forecast"]["day_2"]["risk_level"],
-        lead3=prediction["forecast"]["day_3"]["risk_level"],
-
-        lead1_date=today,
-        lead2_date=today + timedelta(days=1),
-        lead3_date=today + timedelta(days=2),
-
-        predicted_at=predicted_at,
-
-        weather_from=weather_from,
-        weather_to=weather_to,
-        area_id=weather.area_id,
-    )
-
-    db.add(record)
-    db.commit()
-    db.refresh(record)
-
-    print(
-        f"RECOVERY SAVED area={weather.area_id} prediction={record.id}",
-        flush=True,
-    )
-
-    return record
-
-def predict_realtime_by_area_with_datetime(
-    db: Session,
-    area_id: str,
-    predicted_at: datetime,
-) -> Dict[str, Any]:
-
-    weather_records = get_weather_history_by_area(db, area_id)
-
-    if not weather_records:
-        return {
-            "status": "error",
-            "message": "No weather data found for this area",
-            "area_id": area_id,
-        }
-
-    if len(weather_records) < 192:
-        return {
-            "status": "error",
-            "message": "Not enough weather history to build model features",
-            "area_id": area_id,
-            "records_found": len(weather_records),
-            "records_required": 192,
-        }
-
-    latest_weather = max(weather_records, key=lambda item: item.time)
-
-    feature_result = build_features_from_weather_history(weather_records)
-
-    features = feature_result["features"]
-
-    weather_from = feature_result["weather_from"]
-    weather_to = feature_result["weather_to"]
-
-    payload = {
-        "province": area_id,
-        "area_id": area_id,
-        "lat": None,
-        "lon": None,
-    }
-    payload.update(features)
-
-    prediction = run_flood_prediction(payload)
-
-    saved_prediction = save_flood_prediction_by_datetime(
-        db,
-        latest_weather,
-        prediction,
-        weather_from,
-        weather_to,
-        predicted_at,
-    )
-
-    prediction["status"] = "success"
-    prediction["source"] = "ai_weather_model"
-    prediction["area_id"] = area_id
-    prediction["iot_available"] = False
-    prediction["weather_time"] = (
-        latest_weather.time.isoformat()
-        if latest_weather.time
-        else None
-    )
-    prediction["weather_records_used"] = len(weather_records)
-
-    prediction["prediction_id"] = str(saved_prediction.id)
-    prediction["predicted_at"] = saved_prediction.predicted_at.isoformat()
-
-    return prediction
+    return window_start, window_end

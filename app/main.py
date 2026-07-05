@@ -3,7 +3,6 @@ from fastapi import FastAPI
 from app.api.routes.flood_prediction import router as prediction_router
 from app.api.routes.benchmark import router as benchmark_router
 from app.api.middleware.cors import setup_cors
-from app.api.routes.admin_prediction import router as admin_prediction_router
 
 
 app = FastAPI(
@@ -15,7 +14,6 @@ setup_cors(app)
 
 app.include_router(prediction_router)
 app.include_router(benchmark_router)
-app.include_router(admin_prediction_router)
 
 
 @app.get("/health")
