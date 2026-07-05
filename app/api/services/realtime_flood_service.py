@@ -302,6 +302,11 @@ def save_flood_prediction(
     db.add(record)
     db.commit()
     db.refresh(record)
+    
+    print(
+        f"SAVED area={weather.area_id} prediction={record.id}",
+        flush=True
+    )
 
     return record
 
@@ -316,8 +321,18 @@ def predict_all_areas(
     try:
         area_ids = get_all_area_ids_with_weather(db)
         all_total = len(area_ids)
+        
+        print(
+            f"ALL_TOTAL={all_total}, UNIQUE={len(set(area_ids))}",
+            flush=True
+        )
 
         area_ids = area_ids[offset: offset + limit]
+        
+        print(
+            f"OFFSET={offset}, LIMIT={limit}, ACTUAL={len(area_ids)}",
+            flush=True
+        )
 
         total = len(area_ids)
 
@@ -366,6 +381,12 @@ def predict_all_areas(
 
                 try:
                     result = future.result()
+                    
+                    if result.get("status") != "success":
+                        print(
+                            f"SKIP area={area_id} reason={result}",
+                            flush=True
+                        )
 
                     if result.get("status") == "success":
                         processed += 1
@@ -411,6 +432,29 @@ def predict_all_areas(
         errors,
         duration_ms,
     )
+
+    # Kiểm tra thực tế trong DB có bao nhiêu area đã được lưu hôm nay
+    db = get_db_session()
+
+    try:
+        today = datetime.now(
+            ZoneInfo("Asia/Ho_Chi_Minh")
+        ).date()
+
+        actual = (
+            db.query(FloodPrediction.area_id)
+            .filter(FloodPrediction.predicted_at >= today)
+            .distinct()
+            .count()
+        )
+
+        print(
+            f"ACTUAL DB TODAY = {actual}",
+            flush=True
+        )
+
+    finally:
+        db.close()
 
     return {
         "status": "success",
