@@ -108,7 +108,13 @@ def predict_realtime_by_area(db: Session, area_id: str) -> Dict[str, Any]:
 
     latest_weather = max(weather_records, key=lambda item: item.time)
 
+    feature_begin = time.perf_counter()
     feature_result = build_features_from_weather_history(weather_records)
+    logger.info(
+        "BUILD FEATURES area=%s elapsed=%.2fs",
+        area_id,
+        time.perf_counter() - feature_begin
+    )
 
     features = feature_result["features"]
 
@@ -328,10 +334,17 @@ def save_flood_prediction(
         area_id=weather.area_id,
     )
 
+    save_begin = time.perf_counter()
     db.add(record)
     db.commit()
     db.refresh(record)
     
+    logger.info(
+        "SAVE DB area=%s elapsed=%.2fs",
+        weather.area_id,
+        time.perf_counter() - save_begin
+    )
+        
     print(
         f"SAVED area={weather.area_id} prediction={record.id}",
         flush=True
@@ -452,6 +465,11 @@ def predict_all_areas(
     logger.info("START BACKGROUND PREDICTION")
     start = time.perf_counter()
 
+    print(
+        f"START predict_all_areas offset={offset} limit={limit}",
+        flush=True
+    )
+    
     db = get_db_session()
     try:
         area_ids = get_all_area_ids_with_weather(db)
@@ -496,10 +514,11 @@ def predict_all_areas(
     MAX_WORKERS = 3
 
     for batch_start in range(0, total, BATCH_SIZE):
+        batch_begin = time.perf_counter()
         batch = area_ids[batch_start: batch_start + BATCH_SIZE]
 
         logger.info(
-            "Starting batch %s -> %s",
+            "START THREAD BATCH %s -> %s",
             batch_start + 1,
             min(batch_start + BATCH_SIZE, total)
         )
@@ -548,6 +567,13 @@ def predict_all_areas(
                         "Prediction failed area=%s",
                         area_id
                     )
+                    
+        logger.info(
+            "DONE THREAD BATCH %s -> %s elapsed=%.2fs",
+            batch_start + 1,
+            min(batch_start + BATCH_SIZE, total),
+            time.perf_counter() - batch_begin
+        )
 
         print(
             f"PID={os.getpid()} "
@@ -593,7 +619,21 @@ def predict_all_areas(
         db.close()
         
     # Sau khi predict_all_areas() chạy xong, tự động chạy recovery 1 lần.
+    recover_begin = time.perf_counter()
     recovery_result = recover_missing_areas()
+    logger.info(
+        "RECOVERY FINISHED elapsed=%.2fs attempts=%s recovered=%s remaining=%s",
+        time.perf_counter() - recover_begin,
+        recovery_result["attempts"],
+        recovery_result["recovered"],
+        recovery_result["remaining_missing"]
+    )
+    
+    print(
+        f"FINISH predict_all_areas "
+        f"elapsed={time.perf_counter()-start:.1f}s",
+        flush=True
+    )
 
     logger.info(
         "Recovery summary: attempts=%s recovered=%s errors=%s remaining_missing=%s",
@@ -613,7 +653,10 @@ def predict_all_areas(
         "recovery": recovery_result,
     }
 
-def _predict_one_area(area_id: str) -> Dict[str, Any]:
+def _predict_one_area(area_id: str):
+
+    begin = time.perf_counter()
+
     print(f"START AREA {area_id}", flush=True)
 
     db = get_db_session()
@@ -621,7 +664,19 @@ def _predict_one_area(area_id: str) -> Dict[str, Any]:
     try:
         result = predict_realtime_by_area(db, area_id)
 
-        print(f"DONE AREA {area_id}", flush=True)
+        elapsed = time.perf_counter() - begin
+
+        if elapsed > 5:
+            logger.warning(
+                "SLOW AREA area=%s elapsed=%.2fs",
+                area_id,
+                elapsed
+            )
+
+        print(
+            f"DONE AREA {area_id} elapsed={elapsed:.2f}s",
+            flush=True
+        )
 
         return result
 
