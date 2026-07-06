@@ -617,31 +617,6 @@ def predict_all_areas(
 
     finally:
         db.close()
-        
-    # Sau khi predict_all_areas() chạy xong, tự động chạy recovery 1 lần.
-    recover_begin = time.perf_counter()
-    recovery_result = recover_missing_areas()
-    logger.info(
-        "RECOVERY FINISHED elapsed=%.2fs attempts=%s recovered=%s remaining=%s",
-        time.perf_counter() - recover_begin,
-        recovery_result["attempts"],
-        recovery_result["recovered"],
-        recovery_result["remaining_missing"]
-    )
-    
-    print(
-        f"FINISH predict_all_areas "
-        f"elapsed={time.perf_counter()-start:.1f}s",
-        flush=True
-    )
-
-    logger.info(
-        "Recovery summary: attempts=%s recovered=%s errors=%s remaining_missing=%s",
-        recovery_result["attempts"],
-        recovery_result["recovered"],
-        recovery_result["errors"],
-        recovery_result["remaining_missing"],
-    )
 
     return {
         "status": "success",
@@ -649,8 +624,7 @@ def predict_all_areas(
         "processed": processed,
         "high_risk": high_risk,
         "errors": errors,
-        "duration_ms": duration_ms,
-        "recovery": recovery_result,
+        "duration_ms": duration_ms
     }
 
 def _predict_one_area(area_id: str):
