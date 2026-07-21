@@ -17,7 +17,7 @@ from app.internal.domain.weather_data import WeatherData
 
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
-from sqlalchemy import func
+from uuid import UUID
 
 
 from app.internal.domain.flood_prediction import FloodPrediction
@@ -457,7 +457,51 @@ def recover_missing_areas() -> Dict[str, int]:
         "errors": total_errors, #số lỗi
         "remaining_missing": final_missing, #số khu vực chưa vá dữ liệu
     }
+    
+def recover_test_areas(area_ids: list[str]) -> Dict[str, Any]:
 
+    recovered = 0
+    errors = 0
+    error_details = []
+
+    logger.info("TEST RECOVERY areas=%s", len(area_ids))
+
+    for area_id in area_ids:
+
+        try:
+            result = _predict_one_area(area_id)
+
+            if result.get("status") == "success":
+                recovered += 1
+            else:
+                errors += 1
+                error_details.append({
+                    "area_id": area_id,
+                    "message": result.get("message")
+                })
+
+        except Exception as ex:
+
+            errors += 1
+
+            error_details.append({
+                "area_id": area_id,
+                "message": str(ex)
+            })
+
+            logger.exception(
+                "TEST RECOVERY FAILED area=%s",
+                area_id
+            )
+
+    return {
+        "attempts": len(area_ids),
+        "recovered": recovered,
+        "errors": errors,
+        "remaining_missing": len(area_ids) - recovered,
+        "error_details": error_details
+    }
+    
 def predict_all_areas(
     offset: int = 0,
     limit: int = 500
@@ -625,6 +669,64 @@ def predict_all_areas(
         "high_risk": high_risk,
         "errors": errors,
         "duration_ms": duration_ms
+    }
+    
+def predict_test_areas(area_ids: list[str]) -> Dict[str, Any]:
+
+    start = time.perf_counter()
+
+    processed = 0
+    errors = 0
+    high_risk = 0
+    error_details = []
+
+    for area_id in area_ids:
+
+        try:
+            result = _predict_one_area(area_id)
+
+            if result.get("status") == "success":
+
+                processed += 1
+
+                if any(
+                    day.get("risk_level") == "HIGH"
+                    for day in result.get("forecast", {}).values()
+                ):
+                    high_risk += 1
+
+            else:
+                errors += 1
+
+                error_details.append({
+                    "area_id": area_id,
+                    "message": result.get("message")
+                })
+
+        except Exception as ex:
+
+                errors += 1
+
+                error_details.append({
+                    "area_id": area_id,
+                    "message": str(ex)
+                })
+
+                logger.exception(
+                    "Prediction failed area=%s",
+                    area_id
+                )
+
+    duration_ms = int((time.perf_counter() - start) * 1000)
+
+    return {
+        "status": "success",
+        "total": len(area_ids),
+        "processed": processed,
+        "high_risk": high_risk,
+        "errors": errors,
+        "duration_ms": duration_ms,
+        "error_details": error_details,
     }
 
 def _predict_one_area(area_id: str):

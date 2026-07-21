@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Query
-from app.api.services.realtime_flood_service import predict_all_areas
+from uuid import UUID
+from app.api.services.realtime_flood_service import predict_all_areas, predict_test_areas,recover_test_areas
 import time
 import logging
 
@@ -42,6 +43,19 @@ def predict_batch(
             "message": str(e)
         }
         
+from pydantic import BaseModel
+
+class PredictRequest(BaseModel):
+    areaIds: list[str]
+#Test area
+@router.post("/predict-test-batch")
+def predict_test_batch(request: PredictRequest):
+    return predict_test_areas(request.areaIds)
+        
+@router.post("/recover-test")
+def recover_test(request: PredictRequest):
+    return recover_test_areas(request.areaIds)        
+
 # Recovery after predict
 @router.post("/recover-missing")
 def recover_missing():
@@ -61,3 +75,6 @@ def recover_missing():
     )
 
     return result
+
+
+
