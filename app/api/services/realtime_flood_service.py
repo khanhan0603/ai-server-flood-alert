@@ -763,59 +763,28 @@ def _predict_one_area(area_id: str):
 
     finally:
         db.close()
-        
-from datetime import timezone
 
 def get_current_prediction_window():
-    now_vn = datetime.now(ZoneInfo("Asia/Ho_Chi_Minh"))
+    now = datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")).replace(tzinfo=None)
 
-    if now_vn.hour < 18 or (now_vn.hour == 18 and now_vn.minute < 30):
-        # Ca sáng
-        window_start = (
-            now_vn.replace(
-                hour=6,
-                minute=30,
-                second=0,
-                microsecond=0,
-            )
-            .astimezone(timezone.utc)
-            .replace(tzinfo=None)
+    if now.hour < 18 or (now.hour == 18 and now.minute < 30):
+        window_start = now.replace(
+            hour=6, minute=30, second=0, microsecond=0
         )
 
-        window_end = (
-            now_vn.replace(
-                hour=18,
-                minute=30,
-                second=0,
-                microsecond=0,
-            )
-            .astimezone(timezone.utc)
-            .replace(tzinfo=None)
+        window_end = now.replace(
+            hour=18, minute=30, second=0, microsecond=0
         )
 
     else:
-        # Ca tối
-        window_start = (
-            now_vn.replace(
-                hour=18,
-                minute=30,
-                second=0,
-                microsecond=0,
-            )
-            .astimezone(timezone.utc)
-            .replace(tzinfo=None)
+        window_start = now.replace(
+            hour=18, minute=30, second=0, microsecond=0
         )
 
         window_end = (
-            (now_vn + timedelta(days=1))
-            .replace(
-                hour=6,
-                minute=30,
-                second=0,
-                microsecond=0,
-            )
-            .astimezone(timezone.utc)
-            .replace(tzinfo=None)
+            now + timedelta(days=1)
+        ).replace(
+            hour=6, minute=30, second=0, microsecond=0
         )
 
     return window_start, window_end
