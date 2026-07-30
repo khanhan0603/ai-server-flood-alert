@@ -312,6 +312,15 @@ def save_flood_prediction(
     today = datetime.now(
         ZoneInfo("Asia/Ho_Chi_Minh")
     ).date() #Ngày AI chạy
+    
+    print("TZ =", os.getenv("TZ"), flush=True)
+    print("time.tzname =", time.tzname, flush=True)
+    print("local =", datetime.now(), flush=True)
+    print(
+        "VN =",
+        datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")),
+        flush=True,
+    )
 
     record = FloodPrediction(
         lead1_probability=prediction["forecast"]["day_1"]["probability"],
@@ -333,12 +342,14 @@ def save_flood_prediction(
         weather_to=weather_to,
         area_id=weather.area_id,
     )
+    print("record.predicted_at =", record.predicted_at, flush=True)
 
     save_begin = time.perf_counter()
     db.add(record)
     db.commit()
     db.refresh(record)
     
+    print("DB predicted_at =", record.predicted_at, flush=True)
     logger.info(
         "SAVE DB area=%s elapsed=%.2fs",
         weather.area_id,
