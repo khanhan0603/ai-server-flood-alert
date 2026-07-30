@@ -313,14 +313,11 @@ def save_flood_prediction(
         ZoneInfo("Asia/Ho_Chi_Minh")
     ).date() #Ngày AI chạy
     
-    print("TZ =", os.getenv("TZ"), flush=True)
-    print("time.tzname =", time.tzname, flush=True)
-    print("local =", datetime.now(), flush=True)
-    print(
-        "VN =",
-        datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")),
-        flush=True,
-    )
+    vn_now = datetime.now(ZoneInfo("Asia/Ho_Chi_Minh"))
+    vn_now_naive = vn_now.replace(tzinfo=None)
+
+    print("VN aware =", vn_now)
+    print("VN naive =", vn_now_naive)
 
     record = FloodPrediction(
         lead1_probability=prediction["forecast"]["day_1"]["probability"],
@@ -335,9 +332,7 @@ def save_flood_prediction(
         lead2_date=today + timedelta(days=1),
         lead3_date=today + timedelta(days=2),
 
-        predicted_at=datetime.now(
-            ZoneInfo("Asia/Ho_Chi_Minh")
-        ),
+        predicted_at=vn_now_naive,
         weather_from=weather_from,
         weather_to=weather_to,
         area_id=weather.area_id,
